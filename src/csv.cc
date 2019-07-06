@@ -115,6 +115,8 @@ void csv_reader::read_index(std::istream& in)
       index.push_back(FIELD_CODE);
     else if (payee_mask.match(field))
       index.push_back(FIELD_PAYEE);
+    else if (ameritrade_payee_mask.match(field))
+      index.push_back(FIELD_AMERITRADE_PAYEE);
     else if (amount_mask.match(field))
       index.push_back(FIELD_AMOUNT);
     else if (cost_mask.match(field))
@@ -163,8 +165,18 @@ xact_t * csv_reader::read_xact(bool rich_data)
 
   std::vector<int>::size_type n = 0;
   amount_t amt;
+  amount_t adjust;
+  amount_t cost;
   string total;
   string field;
+  bool saw_ameritrade = true;
+
+#if HAVE_BOOST_REGEX_UNICODE
+  boost::u32regex
+#else
+  boost::regex
+#endif
+    ameritrade("(?:(?:Ctrl )?(?:Shift [BSF] )?|tIP )(BOT|SOLD) ([-+])([0-9]+) (([A-Z]+)(?: ([0-9]+).+?)?) @([-0-9.]+)( [A-Z]+)?");
 
   while (instr.good() && ! instr.eof() && n < index.size()) {
     field = read_field(instr);
@@ -199,24 +211,91 @@ xact_t * csv_reader::read_xact(bool rich_data)
       break;
     }
 
+    case FIELD_AMERITRADE_PAYEE: {
+      boost::match_results<std::string::const_iterator> what;
+
+      if (
+#if HAVE_BOOST_REGEX_UNICODE
+        boost::u32regex_search(field, what, ameritrade)
+#else
+        boost::regex_search(field, what, ameritrade)
+#endif
+        ) {
+        std::string bot_or_sold(what[1]);
+        std::string direction(what[2]);
+        std::string amount(what[3]);
+        std::string full_ticker(what[4]);
+        std::string symbol(what[5]);
+        std::string size(what[6]);
+        std::string cost(what[7]);
+        std::string exchange(what[8]);
+
+        post->account = context.master;
+
+        if (direction == "+") {
+          direction = "";
+        }
+
+        if (full_ticker.find(' ') != std::string::npos) {
+          full_ticker = std::string("\"") + full_ticker + "\"";
+        }
+
+        amount_t amount_amt;
+        std::istringstream amount_str(direction + amount + " " + full_ticker);
+        amount_amt.parse(amount_str, PARSE_NO_REDUCE);
+        if (! amount_amt.has_commodity() &&
+            commodity_pool_t::current_pool->default_commodity)
+          amount_amt.set_commodity(*commodity_pool_t::current_pool->default_commodity);
+
+        post->amount = amount_amt;
+
+        amount_t cost_amt;
+        std::istringstream cost_str(cost);
+        cost_amt.parse(cost_str, PARSE_NO_REDUCE);
+        if (! cost_amt.has_commodity() &&
+            commodity_pool_t::current_pool->default_commodity)
+          cost_amt.set_commodity(*commodity_pool_t::current_pool->default_commodity);
+
+        cost_amt *= amount_amt;
+        if (! size.empty())
+          cost_amt *= amount_t(size);
+        post->cost = cost_amt;
+        post->cost->in_place_unround();
+        post->given_cost = post->cost;
+
+        saw_ameritrade = true;
+      } else {
+        saw_ameritrade = false;
+      }
+
+      xact->payee = field;
+      break;
+    }
+
     case FIELD_AMOUNT: {
       std::istringstream amount_str(field);
       amt.parse(amount_str, PARSE_NO_REDUCE);
       if (! amt.has_commodity() &&
           commodity_pool_t::current_pool->default_commodity)
         amt.set_commodity(*commodity_pool_t::current_pool->default_commodity);
-      post->amount = amt;
+      if (! saw_ameritrade) {
+        post->amount = amt;
+      } else {
+        if (! adjust.is_null())
+          amt += adjust;
+        amt.in_place_negate();
+      }
       break;
     }
 
     case FIELD_COST: {
       std::istringstream amount_str(field);
-      amt.parse(amount_str, PARSE_NO_REDUCE);
-      if (! amt.has_commodity() &&
+      cost.parse(amount_str, PARSE_NO_REDUCE);
+      if (! cost.has_commodity() &&
           commodity_pool_t::current_pool->default_commodity)
-        amt.set_commodity
+        cost.set_commodity
           (*commodity_pool_t::current_pool->default_commodity);
-      post->cost = amt;
+      post->cost = cost;
       break;
     }
 
@@ -230,8 +309,53 @@ xact_t * csv_reader::read_xact(bool rich_data)
       break;
 
     case FIELD_UNKNOWN:
-      if (! names[n].empty() && ! field.empty())
-        xact->set_tag(names[n], string_value(field));
+      if (! names[n].empty() && ! field.empty()) {
+        if (saw_ameritrade && names[n] == "Fees") {
+          unique_ptr<post_t> post(new post_t);
+
+          post->xact = xact.get();
+
+          post->pos           = position_t();
+          post->pos->pathname = context.pathname;
+          post->pos->beg_pos  = context.stream->tellg();
+          post->pos->beg_line = context.linenum;
+          post->pos->sequence = context.sequence++;
+
+          post->set_state(item_t::CLEARED);
+          post->account = context.journal->find_account(_("Expenses:Ameritrade:Fees"));
+          amount_t famt(std::string("$") + field);
+          post->amount = famt.negated();
+          if (adjust.is_null())
+            adjust = famt;
+          else
+            adjust += famt;
+          xact->add_post(post.release());
+        }
+        else if (saw_ameritrade && names[n] == "Commissions") {
+          unique_ptr<post_t> post(new post_t);
+
+          post->xact = xact.get();
+
+          post->pos           = position_t();
+          post->pos->pathname = context.pathname;
+          post->pos->beg_pos  = context.stream->tellg();
+          post->pos->beg_line = context.linenum;
+          post->pos->sequence = context.sequence++;
+
+          post->set_state(item_t::CLEARED);
+          post->account = context.journal->find_account(_("Expenses:Ameritrade:Commissions"));
+          amount_t famt(std::string("$") + field);
+          post->amount = famt.negated();
+          if (adjust.is_null())
+            adjust = famt;
+          else
+            adjust += famt;
+          xact->add_post(post.release());
+        }
+        else {
+          xact->set_tag(names[n], string_value(field));
+        }
+      }
       break;
     }
     n++;
@@ -270,7 +394,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
   post->account = context.master;
 
   if (! amt.is_null())
-    post->amount = - amt;
+    post->amount = amt.negated();
 
   if (! total.empty()) {
     std::istringstream assigned_amount_str(total);

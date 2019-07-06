@@ -60,6 +60,7 @@ class csv_reader
     FIELD_DATE_AUX,
     FIELD_CODE,
     FIELD_PAYEE,
+    FIELD_AMERITRADE_PAYEE,
     FIELD_AMOUNT,
     FIELD_COST,
     FIELD_TOTAL,
@@ -72,6 +73,7 @@ class csv_reader
   mask_t date_aux_mask;
   mask_t code_mask;
   mask_t payee_mask;
+  mask_t ameritrade_payee_mask;
   mask_t amount_mask;
   mask_t cost_mask;
   mask_t total_mask;
@@ -87,6 +89,7 @@ public:
       date_aux_mask("posted( ?date)?"),
       code_mask("code"),
       payee_mask("(payee|desc(ription)?|title)"),
+      ameritrade_payee_mask("ameritrade"),
       amount_mask("amount"),
       cost_mask("cost"),
       total_mask("total"),
