@@ -284,6 +284,10 @@ xact_t * csv_reader::read_xact(bool rich_data)
         if (! adjust.is_null())
           amt += adjust;
         amt.in_place_negate();
+
+        annotation_t details(amt);
+        // details.add_flags(ANNOTATION_PRICE_FIXATED);
+        post->amount.annotate(details);
       }
       break;
     }
@@ -322,7 +326,9 @@ xact_t * csv_reader::read_xact(bool rich_data)
           post->pos->sequence = context.sequence++;
 
           post->set_state(item_t::CLEARED);
-          post->account = context.journal->find_account(_("Expenses:Ameritrade:Fees"));
+          post->account = context.journal->find_account(_("Expenses:TD:Fees"));
+          post->add_flags(POST_VIRTUAL);
+
           amount_t famt(std::string("$") + field);
           post->amount = famt.negated();
           if (adjust.is_null())
@@ -331,7 +337,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
             adjust += famt;
           xact->add_post(post.release());
         }
-        else if (saw_ameritrade && names[n] == "Commissions") {
+        else if (saw_ameritrade && names[n] == "Commission") {
           unique_ptr<post_t> post(new post_t);
 
           post->xact = xact.get();
@@ -343,7 +349,9 @@ xact_t * csv_reader::read_xact(bool rich_data)
           post->pos->sequence = context.sequence++;
 
           post->set_state(item_t::CLEARED);
-          post->account = context.journal->find_account(_("Expenses:Ameritrade:Commissions"));
+          post->account = context.journal->find_account(_("Expenses:TD:Commission"));
+          post->add_flags(POST_VIRTUAL);
+
           amount_t famt(std::string("$") + field);
           post->amount = famt.negated();
           if (adjust.is_null())
@@ -406,6 +414,21 @@ xact_t * csv_reader::read_xact(bool rich_data)
   }
 
   xact->add_post(post.release());
+
+  unique_ptr<post_t> bpost(new post_t);
+
+  bpost->xact = xact.get();
+
+  bpost->pos           = position_t();
+  bpost->pos->pathname = context.pathname;
+  bpost->pos->beg_pos  = context.stream->tellg();
+  bpost->pos->beg_line = context.linenum;
+  bpost->pos->sequence = context.sequence++;
+
+  bpost->set_state(item_t::CLEARED);
+  bpost->account = context.journal->find_account(_("Income:Capital:Short"));
+  // bpost->amount = amount_t(0L);
+  xact->add_post(bpost.release());
 
   return xact.release();
 }
