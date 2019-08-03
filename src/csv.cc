@@ -178,6 +178,13 @@ xact_t * csv_reader::read_xact(bool rich_data)
 #endif
     ameritrade("(?:(?:Ctrl )?(?:Shift [BSF] )?|tIP )(BOT|SOLD) ([-+])([0-9]+) (([A-Z]+)(?: ([0-9]+).+?)?) @([-0-9.]+)( [A-Z]+)?");
 
+#if HAVE_BOOST_REGEX_UNICODE
+  boost::u32regex
+#else
+  boost::regex
+#endif
+    call_or_put("(CALL|PUT)");
+
   while (instr.good() && ! instr.eof() && n < index.size()) {
     field = read_field(instr);
 
@@ -231,6 +238,19 @@ xact_t * csv_reader::read_xact(bool rich_data)
         std::string exchange(what[8]);
 
         post->account = context.master;
+
+        boost::match_results<std::string::const_iterator> ignored;
+        if (
+#if HAVE_BOOST_REGEX_UNICODE
+          boost::u32regex_search(field, ignored, call_or_put)
+#else
+          boost::regex_search(field, ignored, call_or_put)
+#endif
+        ) {
+          post->account = context.journal->find_account(_("Assets:TD:Brokerage:Options"));
+        } else {
+          post->account = context.journal->find_account(_("Assets:TD:Brokerage:Equities"));
+        }
 
         if (direction == "+") {
           direction = "";
@@ -427,7 +447,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
 
   bpost->set_state(item_t::CLEARED);
   bpost->account = context.journal->find_account(_("Income:Capital:Short"));
-  // bpost->amount = amount_t(0L);
+  // bpost->amount = amount_t("$-0.00");
   xact->add_post(bpost.release());
 
   return xact.release();
