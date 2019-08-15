@@ -176,7 +176,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
 #else
   boost::regex
 #endif
-    ameritrade("(?:(?:Ctrl )?(?:Shift [BSF] )?|tIP )(BOT|SOLD) ([-+])([0-9]+) (([A-Z]+)(?: ([0-9]+).+?)?) @([-0-9.]+)( [A-Z]+)?");
+    ameritrade("(?:(?:Ctrl )?(?:Shift [BSF] )?|tIP )(BOT|SOLD) ([-+])([0-9]+) (([/:A-Z0-9]+)(?: ([0-9]+).+?)?) @([-0-9.]+)( [A-Z]+)?");
 
 #if HAVE_BOOST_REGEX_UNICODE
   boost::u32regex
@@ -248,7 +248,11 @@ xact_t * csv_reader::read_xact(bool rich_data)
 #endif
         ) {
           post->account = context.journal->find_account(_("Assets:TD:Brokerage:Options"));
-        } else {
+        }
+        else if (symbol[0] == '/') {
+          post->account = context.journal->find_account(_("Assets:TD:Brokerage:Futures"));
+        }
+        else {
           post->account = context.journal->find_account(_("Assets:TD:Brokerage:Equities"));
         }
 
@@ -334,7 +338,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
 
     case FIELD_UNKNOWN:
       if (! names[n].empty() && ! field.empty()) {
-        if (saw_ameritrade && names[n] == "Fees") {
+        if (names[n] == "Fees") {
           unique_ptr<post_t> post(new post_t);
 
           post->xact = xact.get();
@@ -357,7 +361,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
             adjust += famt;
           xact->add_post(post.release());
         }
-        else if (saw_ameritrade && names[n] == "Commission") {
+        else if (names[n] == "Commission") {
           unique_ptr<post_t> post(new post_t);
 
           post->xact = xact.get();
