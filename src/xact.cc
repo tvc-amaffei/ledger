@@ -388,6 +388,8 @@ bool xact_base_t::finalize()
     bool some_null = false;
 
     foreach (post_t * post, posts) {
+      assert(post->account);
+
       if (! post->amount.is_null()) {
         all_null = false;
         post->amount.in_place_reduce();
@@ -397,7 +399,7 @@ bool xact_base_t::finalize()
 
       if (post->has_flags(POST_DEFERRED)) {
         if (!post->amount.is_null())
-            post->account->add_deferred_post(id(), post);
+          post->account->add_deferred_post(id(), post);
       } else {
         post->account->add_post(post);
       }

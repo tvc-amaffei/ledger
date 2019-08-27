@@ -161,7 +161,7 @@ xact_t * csv_reader::read_xact(bool rich_data)
   post->pos->sequence = context.sequence++;
 
   post->set_state(item_t::CLEARED);
-  post->account = NULL;
+  post->account = context.journal->find_account(_("Unknown"));
 
   std::vector<int>::size_type n = 0;
   amount_t amt;
