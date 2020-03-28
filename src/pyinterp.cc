@@ -61,6 +61,10 @@ void export_utils();
 void export_value();
 void export_xact();
 
+#if PY_MAJOR_VERSION >= 3
+extern "C" PyObject* PyInit_ledger();
+#endif
+
 void initialize_for_python()
 {
   export_times();
@@ -146,26 +150,24 @@ void python_interpreter_t::initialize()
   try {
     DEBUG("python.interp", "Initializing Python");
 
+#if PY_MAJOR_VERSION >= 3
+    // Unbuffer stdio to avoid python output getting stuck in buffer when
+    // stdout is not a TTY. Normally buffers are flushed by Py_Finalize but
+    // Boost has a long-standing issue preventing proper shutdown of the
+    // interpreter with Py_Finalize when embedded.
+    Py_UnbufferedStdioFlag = 1;
+    // PyImport_AppendInittab docs: "This should be called before Py_Initialize()".
+    PyImport_AppendInittab((char*)"ledger", PyInit_ledger);
+#endif
+
     Py_Initialize();
     assert(Py_IsInitialized());
 
     hack_system_paths();
 
     main_module = import_module("__main__");
-
 #if PY_MAJOR_VERSION >= 3
-    static struct PyModuleDef moduledef = {
-        PyModuleDef_HEAD_INIT,
-        "ledger",     /* m_name */
-        NULL,  /* m_doc */
-        -1,                  /* m_size */
-        NULL,    /* m_methods */
-        NULL,                /* m_reload */
-        NULL,                /* m_traverse */
-        NULL,                /* m_clear */
-        NULL,                /* m_free */
-    };
-    python::detail::init_module(moduledef, &initialize_for_python);
+    PyImport_ImportModule("ledger");
 #else
     python::detail::init_module("ledger", &initialize_for_python);
 #endif
@@ -331,13 +333,15 @@ value_t python_interpreter_t::python_command(call_scope_t& args)
 #if PY_MAJOR_VERSION >= 3
   wchar_t ** argv = new wchar_t *[args.size() + 1];
 
-  argv[0] = new wchar_t[std::strlen(argv0) + 1];
-  mbstowcs(argv[0], argv0, std::strlen(argv0));
+  std::size_t len = std::strlen(argv0) + 1;
+  argv[0] = new wchar_t[len];
+  mbstowcs(argv[0], argv0, len);
 
   for (std::size_t i = 0; i < args.size(); i++) {
     string arg = args.get<string>(i);
-    argv[i + 1] = new wchar_t[arg.length() + 1];
-    mbstowcs(argv[0], arg.c_str(), std::strlen(arg.c_str()));
+    std::size_t len = arg.length() + 1;
+    argv[i + 1] = new wchar_t[len];
+    mbstowcs(argv[i + 1], arg.c_str(), len);
   }
 #else
   char ** argv = new char *[args.size() + 1];
